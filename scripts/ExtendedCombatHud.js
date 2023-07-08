@@ -3,13 +3,12 @@ class CombatHud {
     this.fixFoundry = false;
     this.token = token;
     this.actor = token.actor;
-    console.log(this);
   }
 
   async init(){
     this._itemCount = this.actor.items.size
     this.settings = {
-      isMagicItems: game.modules.get("magicitems")?.active,
+      isMagicItems: game.modules.get("magic-items-2")?.active,
       switchEquip: game.settings.get("enhancedcombathud", "switchEquip"),
       tooltipScale: game.settings.get("enhancedcombathud", "tooltipScale"),
       fadeOutInactive: game.settings.get(
@@ -54,6 +53,7 @@ class CombatHud {
           pact: CONFIG.DND5E.spellPreparationModes.pact,
           will: CONFIG.DND5E.spellPreparationModes.atwill,
           innate: game.i18n.localize("enhancedcombathud.hud.spells.innate"),
+          item: "Magic Items",
           1: CONFIG.DND5E.spellLevels["1"],
           2: CONFIG.DND5E.spellLevels["2"],
           3: CONFIG.DND5E.spellLevels["3"],
@@ -248,17 +248,18 @@ class CombatHud {
     }
   }
 
-  static async getMagicItemItem(magicItem){
-    if(!game.modules.get("magicitems")?.active) return null;
+  static async translateMagicItem(magicItem){
+    if(!game.modules.get("magic-items-2")?.active) return null;
     let mi = game.items.get(magicItem.id) ?? await game.packs.get(magicItem.pack)?.getDocument(magicItem.id)
+    if(mi) mi.flags.magicitemsdata = magicItem;
     return mi 
   }
 
-  static async getMagicItemByName(actor, name){
-    if(!game.modules.get("magicitems")?.active) return null;
-    for(let i of MagicItems.actor(actor.id).items.filter(item => item.visible && item.active)){
+  static async getMagicItemBySpellName(actor, name){
+    if(!game.modules.get("magic-items-2")?.active) return null;
+    for(let i of MagicItems.actor(actor._id).items.filter(item => item.visible && item.active)){
       let mItem = i.spells.find(spell => spell.name == name);
-      if(mItem) return await CombatHud.getMagicItemItem(mItem);
+      if(mItem) return await CombatHud.translateMagicItem(mItem);
     }
     return null;
   }
@@ -268,23 +269,28 @@ class CombatHud {
     const itemType = filters.itemType;
     const equipped = filters.equipped;
     const prepared = filters.prepared;
-    let magicitems = [];
+    let magicitemspells = [];
     if(this.settings.isMagicItems){
-      for(let mi of MagicItems.actor(this.actor.id).items.filter(item => item.visible && item.active)){
-        for(let spell of mi.spells){
-          const item = await CombatHud.getMagicItemItem(spell);
-          if(item){
-            item.isMagicItem=true;
-           magicitems.push(item)
-          }
-        }
+      for(let mi of MagicItems.actor(this.actor._id).items.filter(item => item.visible && item.active)){
+        mi.item.isMagicItem=true;
+        mi.item.flags.magicitemdata = mi;
+        // magicitemspells.push(item);
+        // for(let spell of mi.spells){
+        //   const item = await CombatHud.translateMagicItem(spell);
+        //   if(item){
+        //     item.isMagicItem=true;
+        //     magicitemspells.push(item);
+        //   }
+        // }
       }
     }
-    let items = Array.from(this.actor.items).concat(magicitems);
+    let items = Array.from(this.actor.items).concat(magicitemspells);
 
     let filteredItems = items.filter((i) => {
       let itemData = i.system;
-      if (equipped === true && !itemData.equipped) return false;
+      if (equipped === true && !itemData.equipped) {
+        return false;
+      }
       if (
         this.settings.spellMode &&
         prepared === true &&
@@ -301,15 +307,20 @@ class CombatHud {
         itemType &&
         itemType.includes(i.type)
       )
+        {
+          return true;
+        }
+      if(i.isMagicItem){
         return true;
+      }
       return false;
     });
-
     let spells = {};
     spells[this.settings.localize.spells["0"]] = [];
     spells[this.settings.localize.spells["innate"]] = [];
     spells[this.settings.localize.spells["will"]] = [];
     spells[this.settings.localize.spells["pact"]] = [];
+    spells[this.settings.localize.spells["item"]] = [];
     spells[this.settings.localize.spells["1"]] = [];
     spells[this.settings.localize.spells["2"]] = [];
     spells[this.settings.localize.spells["3"]] = [];
@@ -322,29 +333,40 @@ class CombatHud {
     if (prepared) {
       for (let item of filteredItems) {
         let key = item.labels.level;
-        switch (item.system.preparation.mode) {
-          case "innate":
-            key = this.settings.localize.spells["innate"];
-            break;
-
-          case "atwill":
-            key = this.settings.localize.spells["will"];
-            break;
-
-          case "pact":
-            key = this.settings.localize.spells["pact"];
-            break;
+        if(item.isMagicItem){
+          key = this.settings.localize.spells["item"];
+          let item_spells = item.flags.magicitemdata.spells;
+          for(let spell of item_spells){
+            const item = await CombatHud.getMagicItemBySpellName(this.actor,spell.name);
+            if(item){
+              item.isMagicItem=true;
+              spells[key].push(item);
+            }
+          }
         }
-        spells[key].push(item);
-      }
+        else{ 
+          switch (item.system.preparation.mode) {
+            case "innate":
+              key = this.settings.localize.spells["innate"];
+              break;
 
+            case "atwill":
+              key = this.settings.localize.spells["will"];
+              break;
+
+            case "pact":
+              key = this.settings.localize.spells["pact"];
+              break;
+          }
+          spells[key].push(item);
+        }
+      }
       for (let spellLevel of Object.keys(spells)) {
         if (spells[spellLevel].length == 0) {
           delete spells[spellLevel];
         }
       }
     }
-
     if (filters.prepared === true) {
       return spells;
     } else {
@@ -667,56 +689,66 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
         confimed = specialItem ? await specialItem.use() : await this.roller.rollItem(itemName, event);
       }
       let item = specialItem || _this.hudData.findItemByName(itemName);
+      if(!item){
+        CombatHud.getMagicItemBySpellName(_this.object.actor, itemName).then((i) => {
+          item = i;
+        });
+      }
       if (confimed && game.combat?.started) {
-        if (actionDataSet) {
-          this.updateActionEconomy(actionDataSet);
-        } else {
-          this.updateActionEconomy(
-            item.system.activation?.type ?? item.activation.type
-          );
-        }
-      }
-      if (!item && !CombatHud.getMagicItemByName(this.actor ,itemName)){
-        $(event.currentTarget).remove();
-      } else {
-        if (item.system.consume?.type) {
-          switch (item.system.consume.type) {
-            case "ammo":
-              let ammoItem = this.hudData.actor.items.find(
-                    (i) => i.id == item.system.consume?.target
-                  );
-              let ammoCount = confimed
-                ? ammoItem.system?.quantity -
-                  item.system.consume?.amount
-                : ammoItem?.system?.quantity;
-                $(".extended-combat-hud").find(`[data-set] .action-element-title:contains(${itemName})`).closest('div').each((index, element) => element.dataset.itemCount = ammoCount)
-                event.currentTarget.dataset.itemCount = ammoCount;
-              break;
-            case "attribute":
-              let value = Object.byString(
-                this.hudData.actor.system,
-                item.system.consume.target
-              );
-              let resCount = value;
-              event.currentTarget.dataset.itemCount = resCount;
+         if (actionDataSet) {
+           this.updateActionEconomy(actionDataSet);
+         } else {
+           this.updateActionEconomy(
+             item.system.activation?.type ?? item.activation.type
+           );
+         }
+       }
+       if (!item && !CombatHud.getMagicItemBySpellName(_this.object.actor ,itemName))
+       { 
+         $(event.currentTarget).remove();
+       } else {
+         try {
+           if (item.system.consume?.type) {
+             switch (item.system.consume.type) {
+               case "ammo":
+                 let ammoItem = this.hudData.actor.items.find(
+                       (i) => i.id == item.system.consume?.target
+                     );
+                 let ammoCount = confimed
+                   ? ammoItem.system?.quantity -
+                     item.system.consume?.amount
+                   : ammoItem?.system?.quantity;
+                   $(".extended-combat-hud").find(`[data-set] .action-element-title:contains(${itemName})`).closest('div').each((index, element) => element.dataset.itemCount = ammoCount)
+                   event.currentTarget.dataset.itemCount = ammoCount;
+                 break;
+               case "attribute":
+                 let value = Object.byString(
+                   this.hudData.actor.system,
+                   item.system.consume.target
+                 );
+                 let resCount = value;
+                 event.currentTarget.dataset.itemCount = resCount;
+             }
+           } else {
+             let uses = item.system.quantity || item.system.uses.value;
+             event.currentTarget.dataset.itemCount = uses;
+            }
+          } catch (e) {
+            console.log(e);
           }
-        } else {
-          let uses = item.system.quantity || item.system.uses.value;
-          event.currentTarget.dataset.itemCount = uses;
+          /*let uses = item.system.quantity || item.system.uses.value;
+          let isAmmo = item.system.consume?.type == "ammo";
+          let ammoItem = isAmmo
+            ? this.hudData.actor.items.find(
+                (i) => i.id == item.system.consume?.target
+              )
+            : null;
+          let ammoCount = confimed
+            ? ammoItem?.data?.data?.quantity - item.system.consume?.amount
+            : ammoItem?.data?.data?.quantity;
+          event.currentTarget.dataset.itemCount = isAmmo ? ammoCount : uses;*/
         }
-        /*let uses = item.system.quantity || item.system.uses.value;
-        let isAmmo = item.system.consume?.type == "ammo";
-        let ammoItem = isAmmo
-          ? this.hudData.actor.items.find(
-              (i) => i.id == item.system.consume?.target
-            )
-          : null;
-        let ammoCount = confimed
-          ? ammoItem?.data?.data?.quantity - item.system.consume?.amount
-          : ammoItem?.data?.data?.quantity;
-        event.currentTarget.dataset.itemCount = isAmmo ? ammoCount : uses;*/
-      }
-      this.updateSpellSlots();
+        this.updateSpellSlots();
     });
     this.element.on("mouseenter", '[data-type="trigger"]', (event) => {
       let $element = $(event.currentTarget);
@@ -1157,11 +1189,14 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
     ) {
       spellSlots =
         '<span class="spell-slot spell-cantrip"><i class="fas fa-infinity"></i></span>';
-    } else {
+    } 
+    else if(obj === _this.settings.localize.spells.item){
+      spellSlots =
+        '<span class="spell-slot spell-cantrip"><i class="fas fa-infinity"></i></span>';
+    }
+    else {
       let spellSlotDetails = _this.spellSlots[convertSpellSlot];
-
       for (let index = 0; index < spellSlotDetails.max; index++) {
-        //spellSlots.push(index < spellSlotDetails.value);
         spellSlots += `<span class="spell-slot spell-${
           index < spellSlotDetails.max - spellSlotDetails.value
             ? "used"
@@ -1204,7 +1239,7 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
     )
       return;
     if (!showTooltipSpecial && ECHItems[itemName]) return;
-    let item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemByName(this.hudData.actor, itemName);
+    let item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemBySpellName(this.hudData.actor, itemName);
     let title;
     let description;
     let itemType;
@@ -1398,12 +1433,17 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
   }
 
   static getRangeForItem(item) {
-    const touchRange = item.system.range.units == "touch" ? canvas?.scene?.grid?.distance : null;
-    return {
-        range: Math.max(item.system?.range?.value ?? touchRange, item.system?.range?.long ?? 0) ?? Infinity,
-        normal: item.system?.range?.value ?? touchRange,
-        long: item.system?.range?.long ?? null,
-    };
+    if (item instanceof Promise) 
+      item.then(i => this.getRangeForItem(i));
+    else{
+      const touchRange = item.system.range.units == "touch" ? canvas?.scene?.grid?.distance : null;
+      return {
+          range: Math.max(item.system?.range?.value ?? touchRange, item.system?.range?.long ?? 0) ?? Infinity,
+          normal: item.system?.range?.value ?? touchRange,
+          long: item.system?.range?.long ?? null,
+      };
+    }
+
   }
 
   showRangeRings(normal, long) {
@@ -1417,7 +1457,7 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
     if(!game.Levels3DPreview?._active || !itemName) return;
     const sett = game.settings.get("enhancedcombathud", "rangefinder")
     const showRangeFinder = sett != "none";
-    const item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemByName(this.hudData.actor, itemName);
+    const item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemBySpellName(this.hudData.actor, itemName);
     if (!item) return;
     const { range, normal, long } = CombatHudCanvasElement.getRangeForItem(item);
     if (!canvas.hud.enhancedcombathud.isTargetPicker) this.showRangeRings(normal, long);
@@ -1529,7 +1569,7 @@ class ECHDiceRoller {
         //return await BetterRolls.quickRollByName(this.actor.data.name, itemName);
         const actorId = this.actor.id;
         const actorToRoll = canvas.tokens.placeables.find((t) => t.actor?.id === actorId)?.actor ?? game.actors.get(actorId);
-        const itemToRoll = actorToRoll?.items.find((i) => i.name === itemName) ?? CombatHud.getMagicItemByName(actorToRoll, itemName);
+        const itemToRoll = actorToRoll?.items.find((i) => i.name === itemName) ?? CombatHud.getMagicItemBySpellName(actorToRoll, itemName);
         if (game.modules.get("itemacro")?.active && itemToRoll.hasMacro()) {
             itemToRoll.executeMacro();
         }
@@ -1547,9 +1587,6 @@ class ECHDiceRoller {
     if (!finalItemToRoll) { 
       finalItemToRoll = this.actor.items.getName(itemName);
     }
-    if (!finalItemToRoll) {
-        return await this.rollMagicItem(itemName);
-    }
     const useTargetPicker = game.settings.get("enhancedcombathud", "rangepicker")
     if (useTargetPicker) {  
       const release = game.settings.get("enhancedcombathud", "rangepickerclear");
@@ -1560,7 +1597,12 @@ class ECHDiceRoller {
       canvas.hud.enhancedcombathud.isTargetPicker = false;
       if(!res) return;
     }
-    return await finalItemToRoll.use();
+    if(finalItemToRoll instanceof Promise){
+      return finalItemToRoll.then((item) => {
+        return this.rollMagicItem(itemName);
+      });
+    }
+    return finalItemToRoll.use();
   }
 
   async rollMagicItem(itemName){
@@ -1742,17 +1784,34 @@ class ECHTargetPicker{
   }
 
   static getTargetCount(item) {
-    const validTargets = ["creature", "ally", "enemy"];
-    const actionType = item.system.actionType;
-    const targetType = item.system.target.type;
-    if (validTargets.includes(targetType)) {
-        return item.system.target.value;
-    } else {
-        if (actionType === "mwak" || actionType === "rwak") {
-            return 1;
+    if(item instanceof Promise) {
+      item.then((i) => {
+        const validTargets = ["creature", "ally", "enemy"];
+        const actionType = i.system.actionType;
+        const targetType = i.system.target.type;
+        if (validTargets.includes(targetType)) {
+            return i.system.target.value;
+        } else {
+            if (actionType === "mwak" || actionType === "rwak") {
+                return 1;
+            }
         }
+        return null;
+      });
     }
-    return null;
+    else {  
+      const validTargets = ["creature", "ally", "enemy"];
+      const actionType = item.system.actionType;
+      const targetType = item.system.target.type;
+      if (validTargets.includes(targetType)) {
+          return item.system.target.value;
+      } else {
+          if (actionType === "mwak" || actionType === "rwak") {
+              return 1;
+          }
+      }
+      return null;
+    }
   }
 
   set targetCount(count) { 
