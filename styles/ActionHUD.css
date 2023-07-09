@@ -245,6 +245,18 @@
   width: auto;
   height: auto;
 }
+.feature-spell-slots .spell-slot.magic-item {
+  background: transparent;
+  box-shadow: none;
+  font-size: 1rem;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0px;
+  width: auto;
+  height: auto;
+}
 
 .feature-element {
 	  background: transparent no-repeat center;

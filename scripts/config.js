@@ -903,7 +903,11 @@ Handlebars.registerHelper("hasUses", function (item) {
         itemCount = resCount;
         break;
     }
-  } else {
+  } else if (item.isMagicItem) {
+    let uses = item.flags.magicitemsdata.consumption;
+    itemCount = uses;
+  } 
+  else {
     let uses = item.system.quantity || item.system.uses.value;
     itemCount = uses;
   }

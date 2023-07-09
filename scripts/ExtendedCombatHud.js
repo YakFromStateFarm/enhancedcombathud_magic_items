@@ -66,6 +66,7 @@ class CombatHud {
         },
       },
     };
+    MagicItems.actor(this.actor._id).items.map((item) =>  {this.settings.localize.spells[item.name] = item.name;});
     this.actions = {
       attack: await this.getItems({
         actionType: ["action"],
@@ -276,9 +277,10 @@ class CombatHud {
       for(let mi of MagicItems.actor(this.actor._id).items.filter(item => item.visible && item.active)){
         mi.item.isMagicItem=true;
         for(let spell of mi.spells){
-          const item = await CombatHud.translateMagicItem(this.actor, spell);
+          const item = await CombatHud.translateMagicItem(spell);
           if(item){
             item.isMagicItem=true;
+            item.belongsTo = mi.item.name;
             magicitemspells.push(item);
           }
         }
@@ -302,7 +304,7 @@ class CombatHud {
         itemData.preparation?.mode == "prepared" &&
         itemData.level !== 0
       ){
-         if(!i.isMagicItem)  return false;
+        if(!i.isMagicItem)  return false;
       }
       //If the action type in the filter matches the activation type of the item AND the item types match the filter, return true
       if (
@@ -317,26 +319,16 @@ class CombatHud {
       return false;
     });
     let spells = {};
-    spells[this.settings.localize.spells["0"]] = [];
-    spells[this.settings.localize.spells["innate"]] = [];
-    spells[this.settings.localize.spells["will"]] = [];
-    spells[this.settings.localize.spells["pact"]] = [];
-    spells[this.settings.localize.spells["item"]] = [];
-    spells[this.settings.localize.spells["1"]] = [];
-    spells[this.settings.localize.spells["2"]] = [];
-    spells[this.settings.localize.spells["3"]] = [];
-    spells[this.settings.localize.spells["4"]] = [];
-    spells[this.settings.localize.spells["5"]] = [];
-    spells[this.settings.localize.spells["6"]] = [];
-    spells[this.settings.localize.spells["7"]] = [];
-    spells[this.settings.localize.spells["8"]] = [];
-    spells[this.settings.localize.spells["9"]] = [];
+    //initialize the spells object
+    for (let key in this.settings.localize.spells) {
+      spells[this.settings.localize.spells[key]] = [];
+    }
     //This sets up the spells that are prepared and will show up
     if (prepared) {
       for (let item of filteredItems) {
         let key = item.labels.level;
         if(item.isMagicItem && item.type == "spell"){
-          key = this.settings.localize.spells["item"];
+          key = this.settings.localize.spells[item.belongsTo];
         }
         else{ 
           switch (item.system.preparation.mode) {
@@ -1181,9 +1173,19 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
       spellSlots =
         '<span class="spell-slot spell-cantrip"><i class="fas fa-infinity"></i></span>';
     } 
-    else if(obj === _this.settings.localize.spells.item){
-      spellSlots =
+    else if(obj.indexOf("Level") == -1){
+      let item = _this.actor.items.find(i => i.name == obj);
+      console.log(item);
+      if(item.isMagicItem){
+        spellSlots =
+        `<span class="spell-slot magic-item">
+        Charges : ${item.flags.magicitems.uses ? item.flags.magicitems.uses : item.flags.magicitems.charges}/${item.flags.magicitems.charges}
+        </span>`;
+      }
+      else{
+        spellSlots =
         '<span class="spell-slot spell-cantrip"><i class="fas fa-infinity"></i></span>';
+      }
     }
     else {
       let spellSlotDetails = _this.spellSlots[convertSpellSlot];
@@ -1589,12 +1591,11 @@ class ECHDiceRoller {
       if(!res) return;
     }
     if(finalItemToRoll instanceof Promise){
-      console.log(finalItemToRoll);
       return finalItemToRoll.then(item => item.use());
     }
-    // else {
-      // return finalItemToRoll.use(); //ERE
-    // }
+    else {
+      return finalItemToRoll.use();
+    }
   }
 
   async rollMagicItem(itemName){
@@ -1963,9 +1964,9 @@ Hooks.on("preUpdateCombat", (combat, updates) => {
   }
 });
 
-Hooks.on("updateItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)})
-Hooks.on("deleteItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)})
-Hooks.on("createItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)})
+Hooks.on("updateItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)});
+Hooks.on("deleteItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)}); //rerendering
+Hooks.on("createItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)});
 
 Hooks.on("init", () => { 
   if (!game.modules.get("lib-wrapper")?.active) return;
@@ -1982,4 +1983,4 @@ Hooks.on("init", () => {
         },
         "MIXED",
     );
-})
+});
