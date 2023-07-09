@@ -255,7 +255,7 @@ class CombatHud {
     return mi 
   }
 
-  static async getMagicItemBySpellName(actor, name){
+  static async getMagicItemSpellBySpellName(actor, name){
     if(!game.modules.get("magic-items-2")?.active) return null;
     for(let i of MagicItems.actor(actor._id).items.filter(item => item.visible && item.active)){
       let mItem = i.spells.find(spell => spell.name == name);
@@ -264,6 +264,8 @@ class CombatHud {
     return null;
   }
 
+  //This function gets the items for the combat hud. This includes spells, magic items, and feats.
+  //It also applies the items to where they should go, as far as action, bonus, reaction, etc.
   async getItems(filters) {
     const actionType = filters.actionType;
     const itemType = filters.itemType;
@@ -273,46 +275,45 @@ class CombatHud {
     if(this.settings.isMagicItems){
       for(let mi of MagicItems.actor(this.actor._id).items.filter(item => item.visible && item.active)){
         mi.item.isMagicItem=true;
-        mi.item.flags.magicitemdata = mi;
-        // magicitemspells.push(item);
-        // for(let spell of mi.spells){
-        //   const item = await CombatHud.translateMagicItem(spell);
-        //   if(item){
-        //     item.isMagicItem=true;
-        //     magicitemspells.push(item);
-        //   }
-        // }
+        for(let spell of mi.spells){
+          const item = await CombatHud.translateMagicItem(this.actor, spell);
+          if(item){
+            item.isMagicItem=true;
+            magicitemspells.push(item);
+          }
+        }
       }
     }
     let items = Array.from(this.actor.items).concat(magicitemspells);
 
+    //Filter out items that don't match the filters
     let filteredItems = items.filter((i) => {
       let itemData = i.system;
+      //If the item is not equipped, return false
       if (equipped === true && !itemData.equipped) {
         return false;
       }
+      //If the HUD is set to only show prepared spells and the item needs to be prepared
+      //and the item is not prepared, return false?
       if (
         this.settings.spellMode &&
         prepared === true &&
         itemData.preparation?.prepared === false &&
         itemData.preparation?.mode == "prepared" &&
         itemData.level !== 0
-      )
-        {
-        if(!i.isMagicItem)  return false;
-        }
+      ){
+         if(!i.isMagicItem)  return false;
+      }
+      //If the action type in the filter matches the activation type of the item AND the item types match the filter, return true
       if (
         actionType &&
         actionType.includes(itemData.activation?.type) &&
         itemType &&
         itemType.includes(i.type)
-      )
-        {
+      ){
           return true;
-        }
-      if(i.isMagicItem){
-        return true;
       }
+      //Default return false
       return false;
     });
     let spells = {};
@@ -330,19 +331,12 @@ class CombatHud {
     spells[this.settings.localize.spells["7"]] = [];
     spells[this.settings.localize.spells["8"]] = [];
     spells[this.settings.localize.spells["9"]] = [];
+    //This sets up the spells that are prepared and will show up
     if (prepared) {
       for (let item of filteredItems) {
         let key = item.labels.level;
-        if(item.isMagicItem){
+        if(item.isMagicItem && item.type == "spell"){
           key = this.settings.localize.spells["item"];
-          let item_spells = item.flags.magicitemdata.spells;
-          for(let spell of item_spells){
-            const item = await CombatHud.getMagicItemBySpellName(this.actor,spell.name);
-            if(item){
-              item.isMagicItem=true;
-              spells[key].push(item);
-            }
-          }
         }
         else{ 
           switch (item.system.preparation.mode) {
@@ -358,8 +352,8 @@ class CombatHud {
               key = this.settings.localize.spells["pact"];
               break;
           }
-          spells[key].push(item);
         }
+        spells[key].push(item);
       }
       for (let spellLevel of Object.keys(spells)) {
         if (spells[spellLevel].length == 0) {
@@ -678,6 +672,7 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
       let itemName = $(event.currentTarget).data("itemname");
       let actionDataSet = event.currentTarget.dataset.atype;
       let specialItem;
+      //If you cannot find this item in the items list, it must be a special item
       if (!_this.hudData.findItemByName(itemName))
         specialItem = this.getSpecialItem(itemName);
       const useCE = specialItem && game.modules.get("dfreds-convenient-effects")?.active && game.dfreds.effectInterface.findEffectByName(itemName);
@@ -686,11 +681,18 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
         confimed = true;
         await game.dfreds.effectInterface.toggleEffect(itemName, { overlay: false, uuids : [this.object.actor.uuid] });
       } else {
-        confimed = specialItem ? await specialItem.use() : await this.roller.rollItem(itemName, event);
+        if(specialItem || _this.hudData.findItemByName(itemName)){
+          confimed = specialItem ? await specialItem.use() : await this.roller.rollItem(itemName, event); //second rollitem
+        }
+        else{
+          CombatHud.getMagicItemSpellBySpellName(_this.object.actor, itemName).then((i) => {
+            confimed = this.roller.rollMagicItem(itemName);
+          });
+        }
       }
       let item = specialItem || _this.hudData.findItemByName(itemName);
       if(!item){
-        CombatHud.getMagicItemBySpellName(_this.object.actor, itemName).then((i) => {
+        CombatHud.getMagicItemSpellBySpellName(_this.object.actor, itemName).then((i) => {
           item = i;
         });
       }
@@ -703,7 +705,7 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
            );
          }
        }
-       if (!item && !CombatHud.getMagicItemBySpellName(_this.object.actor ,itemName))
+       if (!item && !CombatHud.getMagicItemSpellBySpellName(_this.object.actor ,itemName))
        { 
          $(event.currentTarget).remove();
        } else {
@@ -736,17 +738,6 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
           } catch (e) {
             console.log(e);
           }
-          /*let uses = item.system.quantity || item.system.uses.value;
-          let isAmmo = item.system.consume?.type == "ammo";
-          let ammoItem = isAmmo
-            ? this.hudData.actor.items.find(
-                (i) => i.id == item.system.consume?.target
-              )
-            : null;
-          let ammoCount = confimed
-            ? ammoItem?.data?.data?.quantity - item.system.consume?.amount
-            : ammoItem?.data?.data?.quantity;
-          event.currentTarget.dataset.itemCount = isAmmo ? ammoCount : uses;*/
         }
         this.updateSpellSlots();
     });
@@ -1239,7 +1230,7 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
     )
       return;
     if (!showTooltipSpecial && ECHItems[itemName]) return;
-    let item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemBySpellName(this.hudData.actor, itemName);
+    let item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemSpellBySpellName(this.hudData.actor, itemName);
     let title;
     let description;
     let itemType;
@@ -1457,7 +1448,7 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
     if(!game.Levels3DPreview?._active || !itemName) return;
     const sett = game.settings.get("enhancedcombathud", "rangefinder")
     const showRangeFinder = sett != "none";
-    const item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemBySpellName(this.hudData.actor, itemName);
+    const item = this.hudData.actor.items.find((i) => i.name == itemName) ?? await CombatHud.getMagicItemSpellBySpellName(this.hudData.actor, itemName);
     if (!item) return;
     const { range, normal, long } = CombatHudCanvasElement.getRangeForItem(item);
     if (!canvas.hud.enhancedcombathud.isTargetPicker) this.showRangeRings(normal, long);
@@ -1569,7 +1560,7 @@ class ECHDiceRoller {
         //return await BetterRolls.quickRollByName(this.actor.data.name, itemName);
         const actorId = this.actor.id;
         const actorToRoll = canvas.tokens.placeables.find((t) => t.actor?.id === actorId)?.actor ?? game.actors.get(actorId);
-        const itemToRoll = actorToRoll?.items.find((i) => i.name === itemName) ?? CombatHud.getMagicItemBySpellName(actorToRoll, itemName);
+        const itemToRoll = actorToRoll?.items.find((i) => i.name === itemName) ?? CombatHud.getMagicItemSpellBySpellName(actorToRoll, itemName);
         if (game.modules.get("itemacro")?.active && itemToRoll.hasMacro()) {
             itemToRoll.executeMacro();
         }
@@ -1598,16 +1589,17 @@ class ECHDiceRoller {
       if(!res) return;
     }
     if(finalItemToRoll instanceof Promise){
-      return finalItemToRoll.then((item) => {
-        return this.rollMagicItem(itemName);
-      });
+      console.log(finalItemToRoll);
+      return finalItemToRoll.then(item => item.use());
     }
-    return finalItemToRoll.use();
+    // else {
+      // return finalItemToRoll.use(); //ERE
+    // }
   }
 
   async rollMagicItem(itemName){
     const parent = this.getMagicItemParent(itemName)
-    await MagicItems.actor(this.actor.id).rollByName(parent, itemName);
+    await MagicItems.actor(this.actor._id).rollByName(parent, itemName);
   }
 
   getMagicItemParent(itemName){
