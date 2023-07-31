@@ -174,10 +174,7 @@ class CombatHud {
     this.tools = this.actor.items
       .filter((i) => i.type == "tool")
       .map((item, index) => {
-        let toolAbility =
-          typeof item.system.ability == "string"
-            ? item.system.ability
-            : item.system.ability[0] || "str";
+        let toolAbility = item.abilityMod || "str";
         let abilityModifiers = this.actor.system.abilities[toolAbility];
         let toolProficiency = Math.ceil(
           item.system.proficient * this.actor.system.attributes.prof
@@ -1738,6 +1735,10 @@ class ECHTargetPicker{
     this.reject = null;
     this._targetCount = game.user.targets.size;
     this._maxTargets = ECHTargetPicker.getTargetCount(item);
+
+    const targetTool = document.querySelector('.control-tool[data-tool="target"]')
+    targetTool?.click();
+
     this.promise = new Promise((resolve, reject) => {
       this.resolve = resolve;
       this.reject = reject;
@@ -1846,6 +1847,7 @@ class ECHTargetPicker{
   }
 
   end(res) {
+    document.querySelector(".control-tool").click();
     this.resolve(res);
     canvas.hud.enhancedcombathud.clearRanges(true);
     this.element.remove();
@@ -1853,6 +1855,7 @@ class ECHTargetPicker{
     document.removeEventListener("mousemove", this.movelistener);
     document.removeEventListener("mouseup", this.clicklistener);
     document.removeEventListener("keyup", this.keyuplistener);
+    document.querySelector('.control-tool[data-tool="select"]')?.click();
   }
 }
 
@@ -1950,37 +1953,30 @@ Hooks.on("deleteToken", (token, updates) => {
   }
 });
 
-Hooks.on("preUpdateCombat", (combat, updates) => {
+Hooks.on("combatStart", (combat, updates) => {
+  const activeToken = canvas.tokens.controlled[0] ?? canvas.tokens.ownedTokens[0];
   if (
     game.settings.get("enhancedcombathud", "openCombatStart") &&
-    canvas.tokens.controlled[0] &&
-    !canvas.hud.enhancedcombathud?.rendered &&
-    combat.previous?.round === null &&
-    combat.previous?.turn === null
+    activeToken &&
+    !canvas.hud.enhancedcombathud?.rendered
   ) {
-    const token = canvas.tokens.get(canvas.tokens.controlled[0]?.id);
-    if(!token?.actor) return
-    canvas.hud.enhancedcombathud.bind(token);
+    if (!activeToken?.actor) return
+    activeToken.control({releaseOthers: true});
+    $(`.control-tool[data-tool="echtoggle"]`).click();
+    canvas.hud.enhancedcombathud.bind(activeToken);
   }
 });
 
-Hooks.on("updateItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)});
-Hooks.on("deleteItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)}); //rerendering
-Hooks.on("createItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)});
+Hooks.on("deleteCombat", (combat) => {
+    if (
+    combat.scene == canvas.scene &&
+      game.settings.get("enhancedcombathud", "openCombatStart") &&
+    canvas.hud.enhancedcombathud?.rendered
+    ) {
+      $(`.control-tool[data-tool="echtoggle"]`).click();
+    }
+})
 
-Hooks.on("init", () => { 
-  if (!game.modules.get("lib-wrapper")?.active) return;
-
-    libWrapper.register(
-        "enhancedcombathud",
-        "CONFIG.Token.objectClass.prototype._onClickLeft",
-        function (wrapped, ...args) {
-            if (canvas?.hud?.enhancedcombathud?.isTargetPicker) {
-                this.setTarget(!this.isTargeted, { releaseOthers: false });
-            } else {
-                return wrapped(...args);
-            }
-        },
-        "MIXED",
-    );
-});
+Hooks.on("updateItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)})
+Hooks.on("deleteItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)})
+Hooks.on("createItem", (item) =>{canvas.hud.enhancedcombathud?.checkReRender(item)})
