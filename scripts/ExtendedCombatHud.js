@@ -8,7 +8,7 @@ class CombatHud {
   async init(){
     this._itemCount = this.actor.items.size
     this.settings = {
-      isMagicItems: game.modules.get("magic-items-2")?.active,
+      hasMagicItems: game.modules.get("magic-items-2")?.active, 
       switchEquip: game.settings.get("enhancedcombathud", "switchEquip"),
       tooltipScale: game.settings.get("enhancedcombathud", "tooltipScale"),
       fadeOutInactive: game.settings.get(
@@ -53,7 +53,6 @@ class CombatHud {
           pact: CONFIG.DND5E.spellPreparationModes.pact,
           will: CONFIG.DND5E.spellPreparationModes.atwill,
           innate: game.i18n.localize("enhancedcombathud.hud.spells.innate"),
-          item: "Magic Items",
           1: CONFIG.DND5E.spellLevels["1"],
           2: CONFIG.DND5E.spellLevels["2"],
           3: CONFIG.DND5E.spellLevels["3"],
@@ -66,6 +65,7 @@ class CombatHud {
         },
       },
     };
+    // This line adds all magic items to the list of localized spells by the item name, making it a seperate category
     MagicItems.actor(this.actor._id).items.map((item) =>  {this.settings.localize.spells[item.name] = item.name;});
     this.actions = {
       attack: await this.getItems({
@@ -246,6 +246,8 @@ class CombatHud {
     }
   }
 
+  // This function looks at the magic item id and gets the relevant data from the magic items module
+  // Do this make sense? Wouldnt it be better to just get the magic item from the actor?
   static async translateMagicItem(magicItem){
     if(!game.modules.get("magic-items-2")?.active) return null;
     let mi = game.items.get(magicItem.id) ?? await game.packs.get(magicItem.pack)?.getDocument(magicItem.id)
@@ -253,6 +255,9 @@ class CombatHud {
     return mi 
   }
 
+  // This function gets the magic item spell by the spell name
+  // It loops over each item in the actor, and then loops over each spell in the item to find the right spell
+  // Do we need this?
   static async getMagicItemSpellBySpellName(actor, name){
     if(!game.modules.get("magic-items-2")?.active) return null;
     for(let i of MagicItems.actor(actor._id).items.filter(item => item.visible && item.active)){
@@ -269,21 +274,24 @@ class CombatHud {
     const itemType = filters.itemType;
     const equipped = filters.equipped;
     const prepared = filters.prepared;
-    let magicitemspells = [];
-    if(this.settings.isMagicItems){
-      for(let mi of MagicItems.actor(this.actor._id).items.filter(item => item.visible && item.active)){
-        mi.item.isMagicItem=true;
-        for(let spell of mi.spells){
-          const item = await CombatHud.translateMagicItem(spell);
-          if(item){
-            item.isMagicItem=true;
-            item.belongsTo = mi.item.name;
-            magicitemspells.push(item);
-          }
-        }
-      }
-    }
-    let items = Array.from(this.actor.items).concat(magicitemspells);
+    // let magicitemspells = [];
+    // if(this.settings.hasMagicItems){
+    //   // Iterating over every magic item
+    //   for(let mi of MagicItems.actor(this.actor._id).items.filter(item => item.visible && item.active)){
+    //     // setting a special field to show that this spell belongs to a magic item
+    //     mi.item.isMagicItem=true;
+    //     for(let spell of mi.spells){
+    //       const item = await CombatHud.translateMagicItem(spell);
+    //       if(item){
+    //         item.isMagicItem=true;
+    //         item.belongsTo = mi.item.name;
+    //         magicitemspells.push(item);
+    //       }
+    //     }
+    //   }
+    // }
+    // let items = Array.from(this.actor.items).concat(magicitemspells);
+    items = Array.from(this.actor.items);
 
     //Filter out items that don't match the filters
     let filteredItems = items.filter((i) => {
@@ -301,7 +309,8 @@ class CombatHud {
         itemData.preparation?.mode == "prepared" &&
         itemData.level !== 0
       ){
-        if(!i.isMagicItem)  return false;
+        // if(!i.isMagicItem)  
+          return false;
       }
       //If the action type in the filter matches the activation type of the item AND the item types match the filter, return true
       if (
@@ -442,6 +451,7 @@ class CombatHud {
       .toggleClass("actions-used", !value);
   }
   get spellSlots() {
+    console.log(this.actor.system);
     return this.actor.system.spells;
   }
   get movementColor() {}
@@ -658,6 +668,7 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
       this.object.actor?.rollDeathSave({})
     });
     this.element.on("click", '[data-type="trigger"]', async (event) => {
+      // this is where the action of actually clicking on a spell and having it cast happens
       let itemName = $(event.currentTarget).data("itemname");
       let actionDataSet = event.currentTarget.dataset.atype;
       let specialItem;
@@ -674,17 +685,11 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
           confimed = specialItem ? await specialItem.use() : await this.roller.rollItem(itemName, event); //second rollitem
         }
         else{
-          CombatHud.getMagicItemSpellBySpellName(_this.object.actor, itemName).then((i) => {
-            confimed = this.roller.rollMagicItem(itemName);
-          });
+          confimed = await this.roller.rollMagicItem(itemName);
         }
       }
-      let item = specialItem || _this.hudData.findItemByName(itemName);
-      if(!item){
-        CombatHud.getMagicItemSpellBySpellName(_this.object.actor, itemName).then((i) => {
-          item = i;
-        });
-      }
+      let item = specialItem || _this.hudData.findItemByName(itemName) || await CombatHud.getMagicItemSpellBySpellName(_this.object.actor, itemName);
+      console.log(item);
       if (confimed && game.combat?.started) {
          if (actionDataSet) {
            this.updateActionEconomy(actionDataSet);
@@ -693,14 +698,16 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
              item.system.activation?.type ?? item.activation.type
            );
          }
-       }
-       if (!item && !CombatHud.getMagicItemSpellBySpellName(_this.object.actor ,itemName))
-       { 
-         $(event.currentTarget).remove();
-       } else {
-         try {
-           if (item.system.consume?.type) {
-             switch (item.system.consume.type) {
+      }
+      if (!item)
+      { 
+        $(event.currentTarget).remove();
+      } 
+      else {
+        try {
+          if (item.system.consume?.type) {
+            console.log(1);
+            switch (item.system.consume.type) {
                case "ammo":
                  let ammoItem = this.hudData.actor.items.find(
                        (i) => i.id == item.system.consume?.target
@@ -721,8 +728,11 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
                  event.currentTarget.dataset.itemCount = resCount;
              }
            } else {
-             let uses = item.system.quantity || item.system.uses.value;
+            console.log(2);
+             let uses = item.system.quantity || item.system.uses.value || item.flags.magicitemsdata?.consumption;
+             console.log(uses);
              event.currentTarget.dataset.itemCount = uses;
+             console.log(event.currentTarget.dataset);
             }
           } catch (e) {
             console.log(e);
@@ -1161,6 +1171,9 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
     } else if (obj.match(/\d+/)) {
       convertSpellSlot = "spell" + obj.match(/\d+/)[0];
     }
+    else {
+      convertSpellSlot = obj;
+    }
     let spellSlots = "";
     if (
       obj == _this.settings.localize.spells["0"] ||
@@ -1174,10 +1187,18 @@ class CombatHudCanvasElement extends BasePlaceableHUD {
       let item = _this.actor.items.find(i => i.name == obj);
       console.log(item);
       if(item.isMagicItem){
-        spellSlots =
-        `<span class="spell-slot magic-item">
-        Charges : ${item.flags.magicitems.uses ? item.flags.magicitems.uses : item.flags.magicitems.charges}/${item.flags.magicitems.charges}
-        </span>`;
+        let magicItemData = item.flags.magicitems;
+        if(magicItemData.charges <= 10){
+          for (let index = 0; index < magicItemData.charges; index++) {
+            // console.log(magicItemData.charges, magicItemData.uses);
+            // console.log(magicItemData);
+            spellSlots += `<span class="spell-slot spell-${
+              index < magicItemData.charges - magicItemData.uses
+                ? "used"
+                : "available"
+            }"></span>`;
+          }
+        }
       }
       else{
         spellSlots =
@@ -1597,7 +1618,8 @@ class ECHDiceRoller {
 
   async rollMagicItem(itemName){
     const parent = this.getMagicItemParent(itemName)
-    await MagicItems.actor(this.actor._id).rollByName(parent, itemName);
+    console.log(parent, itemName);
+    return await MagicItems.actor(this.actor._id).rollByName(parent, itemName);
   }
 
   getMagicItemParent(itemName){
